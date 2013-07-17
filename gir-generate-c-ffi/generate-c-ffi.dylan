@@ -443,9 +443,10 @@ end function;
 define function write-c-ffi-function (context, function-info, container-name) => ()
   let dylan-name = dylanize(g-function-info-get-symbol(function-info));
   if (~binding-already-exported?(context, dylan-name))
+    let function-flags = g-function-info-get-flags(function-info);
     add-exported-binding(context, dylan-name);
     format(context.output-stream, "define C-function %s\n", dylan-name);
-    if (logand(g-function-info-get-flags(function-info), $GI-FUNCTION-IS-METHOD) ~= 0)
+    if (logand(function-flags, $GI-FUNCTION-IS-METHOD) ~= 0)
       format(context.output-stream, "  input parameter self :: %s;\n", container-name);
     end if;
     let num-args = g-callable-info-get-n-args(function-info);
@@ -471,6 +472,39 @@ define function write-c-ffi-function (context, function-info, container-name) =>
     let symbol = g-function-info-get-symbol(function-info);
     format(context.output-stream, "  c-name: \"%s\";\n", symbol);
     format(context.output-stream, "end;\n\n");
+
+    if (logand(function-flags, $GI-FUNCTION-IS-CONSTRUCTOR) ~= 0)
+      let parameters = #[];
+      format(context.output-stream, "define method make(type == %s", container-name);
+      for (i from 0 below num-args)
+        let arg = g-callable-info-get-arg(function-info, i);
+        if (g-arg-info-is-return-value(arg))
+          // XXX: We don't handle this. When does this happen?
+        else
+          let arg-type = map-to-dylan-type(context, g-arg-info-get-type(arg));
+          let arg-name = concatenate(g-base-info-get-name(arg), "_");
+          let p = pair(arg-name, arg-type);
+          parameters := add!(parameters, p);
+        end if;
+        g-base-info-unref(arg);
+      end for;
+      if (size(parameters) > 0)
+        format(context.output-stream, ",\n#key ");
+      end if;
+      let parameters-name-and-type = map(method(p)
+                                           format-to-string("%s :: %s",
+                                                            head(p),
+                                                            tail(p))
+                                         end,
+                                         parameters);
+      format(context.output-stream, "%s)\n",
+             join(parameters-name-and-type, ",\n     "));
+      format(context.output-stream, " => (result :: %s)\n", container-name);
+      format(context.output-stream, "  %s(%s)\n",
+             dylan-name,
+             join(map(head, parameters), ", "));
+      format(context.output-stream, "end method;\n\n");
+    end if;
   end if;
 end function;
 
